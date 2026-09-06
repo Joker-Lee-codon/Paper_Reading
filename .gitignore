@@ -1,0 +1,9 @@
+/*
+!/.gitignore
+!/README.md
+!/Start Reading.command
+!/tools/
+!/public/
+**/__pycache__/
+**/*.pyc
+**/.DS_Store

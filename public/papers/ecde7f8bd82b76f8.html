@@ -1,0 +1,558 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fast-ThinkAct: Efficient Vision-Language-Action Reasoning via Verbalizable Latent Planning</title><style>body{max-width:960px;margin:40px auto;padding:24px;color:#423f3d;font:16px/1.8 system-ui}a{color:#b95d68}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}</style><a href="../dashboard.html">← 全部论文</a><h1>Fast-ThinkAct: Efficient Vision-Language-Action Reasoning via Verbalizable Latent Planning</h1><p>公开阅读副本 · 完整可编辑版本保存在本地文献库</p><pre># 论文快速阅读
+
+## 1. 论文基本信息
+
+- **标题**：Fast-ThinkAct: Efficient Vision-Language-Action Reasoning via Verbalizable Latent Planning
+- **作者**：Chi-Pin Huang, Yunze Man, Zhiding Yu, Min-Hung Chen, Jan Kautz, Yu-Chiang Frank Wang, Fu-En Yang
+- **年份**：2026
+- **会议**：CVPR 2026
+- **论文版本**：arXiv:2601.09708v2，2026 年 2 月 24 日更新
+- **研究方向**：Vision-Language-Action、具身推理、latent Chain-of-Thought、机器人操作、知识蒸馏
+- **任务定义**：在每个时间步 $t$，给定语言指令 $l$ 和视觉观测 $o_t$，模型需要理解场景、形成操作规划，并输出连续机器人动作块 $a_t$。单臂任务通常为 7-DoF，双臂任务通常为 14-DoF。
+- **输入**：当前视觉观测 $o_t$、语言指令 $l$，以及动作模型使用的机器人状态。
+- **中间输出**：$M=6$ 个连续 latent reasoning tokens，以及由 $K=5$ 个 spatial tokens 并行预测的二维视觉轨迹点。
+- **最终输出**：由 diffusion Transformer 动作模型生成的连续机器人控制动作块 $a_t$。
+- **项目主页**：&lt;https://jasper0314-huang.github.io/fast-thinkact/&gt;
+- **论文链接**：&lt;https://arxiv.org/abs/2601.09708&gt;
+- **代码状态**：截至 2026 年 7 月 24 日，项目主页仅提供论文与展示材料，未链接官方代码仓库，因此目前不能确认已经开源。
+
+需要先抓住一个核心区分：Fast-ThinkAct 并不是让 6 个 latent token 直接表示机器人的关节动作。它先用 latent token 做紧凑的高层推理，再用 spatial tokens 表达二维视觉规划，最后由独立的动作模型把视觉规划翻译成低层连续动作。
+
+## 2. 摘要翻译
+
+视觉-语言-动作任务要求智能体理解复杂视觉场景，并在动态环境中执行可适应的动作。近期研究表明，在 VLA 模型中引入显式思维链能够提升模型的泛化能力，但冗长的推理序列会带来较高的推理延迟。本文提出 Fast-ThinkAct，一种通过“可语言化的潜在推理”实现紧凑而有效规划的高效推理框架。Fast-ThinkAct 从教师模型中蒸馏 latent CoT，并利用偏好引导目标对操作轨迹进行对齐，从而将语言规划能力和视觉规划能力共同迁移到具身控制中。这使模型能够学习一种由推理增强的策略，将紧凑推理有效连接到动作执行。论文在多种具身操作和推理基准上进行了实验。结果表明，相比先进的 reasoning VLA，Fast-ThinkAct 最多可以降低 $89.3\%$ 的推理延迟，同时保持长时序规划、少样本适应和失败恢复能力。
+
+## 3. 方法动机
+
+### 3.1 作者为什么提出这个方法？
+
+普通 VLA 主要依赖大规模机器人示范进行监督学习，能够完成常规的抓取、放置等操作，但当任务需要长时序规划、遇到训练分布之外的场景，或者执行中途出现失败时，仅靠动作模仿通常不够。
+
+Reasoning VLA 通过在动作前生成语言 CoT、子目标图像或二维轨迹等中间推理，提高了任务理解和泛化能力。然而，显式文本 CoT 通常需要自回归生成数百个 token。论文以 ThinkAct 为例，其推理轨迹大约包含 250 个 token。机器人控制通常要求 $1$-$15$ Hz 的决策频率，而部分 reasoning VLA 每次决策可能耗时数秒，难以满足实时控制要求。
+
+因此，作者想解决的问题是：**能否保留 reasoning VLA 的规划和泛化能力，同时避免在推理阶段逐词生成冗长文本？**
+
+### 3.2 现有方法的痛点或不足是什么？
+
+1. **Foundation VLA 缺乏显式规划机制**：擅长训练分布内的基本技能，但长时序、失败恢复和少样本迁移能力受限。
+2. **文本 CoT 推理太慢**：文本必须逐 token 自回归生成，推理长度直接转化为延迟。
+3. **简单截短 CoT 会丢失信息**：不进行推理、只允许生成 6 个文本 token，或对文本长度施加 RL 惩罚，都会降低推理任务表现。
+4. **纯语言推理不一定包含动作所需的空间信息**：机器人控制不仅要知道“做什么”，还需要知道末端执行器“往哪里移动”。
+5. **latent CoT 缺少直接监督**：连续 latent 没有天然的文字标签，难以判断其中是否保存了正确、可解释且与动作相关的推理。
+
+### 3.3 论文的核心假设或直觉是什么？
+
+冗长文本 CoT 中真正有用的信息可以压缩到少量连续向量中。只要同时满足以下两个条件，压缩后的 latent reasoning 仍然可以支持机器人控制：
+
+- latent 能够被一个 verbalizer 解码成高质量推理，说明它保留了语义规划；
+- latent 派生出的空间表示与教师的动作对齐视觉规划一致，说明它保留了具身控制需要的空间信息。
+
+换句话说，作者没有要求机器人在测试时“说出思考过程”，而是让它在连续表示空间中完成紧凑思考，并用语言解码和视觉轨迹监督保证这种思考没有失去关键内容。
+
+## 4. 方法设计
+
+### 4.1 整体 Pipeline
+
+Fast-ThinkAct 分为三个训练阶段和一个推理流程。
+
+#### 阶段一：获得具备显式推理能力的教师模型
+
+1. 从预训练 VLM 出发，先进行 SFT 和 CoT-SFT。
+2. 使用动作对齐的视觉奖励和 QA 奖励，通过 GRPO 训练 Textual Teacher $\mathcal{F}_{\theta}^{T}$。
+3. 对同一个输入采样多条文本推理轨迹，根据组内 advantage 找到高质量轨迹 $\tau^{+}$ 和低质量轨迹 $\tau^{-}$。
+
+#### 阶段二：把教师的冗长推理蒸馏到 latent student
+
+1. Latent Student $\mathcal{F}_{\theta}$ 不再生成长文本，而是自回归生成 $M=6$ 个连续 latent token：
+
+   $$
+   \mathbf{z}=\{z_m\}_{m=1}^{M},\qquad z_m\in\mathbb{R}^{d}.
+   $$
+
+2. Verbalizer $\mathcal{V}_{\psi}$ 尝试根据 $\mathbf{z}$ 解码自然语言推理。
+3. 偏好损失 $\mathcal{L}_{\mathrm{verb}}$ 使 latent 更容易被解码为高质量轨迹 $\tau^{+}$，而不是低质量轨迹 $\tau^{-}$。
+4. 轨迹蒸馏损失 $\mathcal{L}_{\mathrm{distill}}$ 对齐教师和学生的视觉计划表示。
+5. 在 latent token 后附加 $K=5$ 个 spatial tokens，并行预测二维 waypoint，使用 $\mathcal{L}_{\mathrm{ans}}$ 进行监督。
+
+#### 阶段三：把高层视觉计划连接到低层动作
+
+1. 从学生 VLM 早期层中，与 spatial tokens 对应的 KV cache 提取视觉规划表示 $c_t$。
+2. 把 $c_t$ 与机器人状态编码器的 KV 一起提供给 diffusion Transformer 动作模型 $\pi_{\phi}$。
+3. 冻结 latent student 和状态编码器，仅训练动作模型、latent projector，使动作模型学会把视觉规划转化为连续动作。
+
+#### 推理阶段
+
+1. 学生 VLM 根据 $(o_t,l)$ 生成 6 个 latent reasoning tokens。
+2. 5 个 spatial tokens 并行形成视觉轨迹规划。
+3. 动作模型读取 spatial KV 和机器人状态，输出连续动作块。
+4. Verbalizer 不参与默认动作推理，只在需要解释 latent 时可选使用。
+
+这也是模型加速的主要来源：测试时不再生成约 250 个文本 CoT token，也不再用 60-70 个文本 token 串行表示 5 个 waypoint。
+
+### 4.2 关键模块
+
+#### 4.2.1 Textual Teacher：产生带质量差异的显式推理
+
+- **输入**：视觉观测 $o_t$、语言指令 $l$。
+- **处理**：通过 GRPO 生成多条显式文本推理和视觉轨迹答案，并由动作对齐奖励、QA 奖励评价。
+- **输出**：候选推理轨迹以及每条轨迹的 advantage。
+- **作用**：提供可比较的高质量和低质量推理样本，为 student 构造偏好监督。
+- **为什么需要**：latent 空间没有天然标签，教师的文本推理和奖励能够间接定义“应该压缩什么”。
+- **没有该模块的问题**：student 缺少稳定的推理目标，只能从动作或 waypoint 监督中学习，难以保证 latent 包含高层语义推理。
+
+#### 4.2.2 Latent Student：用少量连续 token 完成内部推理
+
+- **输入**：$o_t$ 与 $l$。
+- **处理**：自回归生成 $M$ 个连续向量，而不是离散文本 token。
+- **输出**：latent CoT $\mathbf{z}$，以及随后 spatial tokens 的隐状态和 KV cache。
+- **作用**：把冗长 CoT 压缩成固定长度的内部表示，减少自回归步骤。
+- **为什么需要**：文本 token 每一步只能表达一个离散符号；连续向量可以在一个 token 中同时携带更多语义和视觉信息。
+- **没有该模块的问题**：系统会退化为普通文本 reasoning VLA，重新面对高延迟。
+
+#### 4.2.3 Verbalizer：给 latent reasoning 提供语言空间监督
+
+- **结构**：使用 Qwen3-0.6B 初始化，并在每层插入 cross-attention，使其能够读取 $\mathbf{z}$。
+- **输入**：student latent $\mathbf{z}$。
+- **处理**：将 latent 解码为自然语言推理，并基于 $\tau^{+}$、$\tau^{-}$ 进行 DPO 风格的偏好学习。
+- **输出**：对高质量和低质量文本轨迹的条件概率。
+- **作用**：把不可直接监督的 latent 映射回可监督的自然语言空间，同时提供一定可解释性。
+- **为什么需要**：只做 hidden-state 对齐可能复制教师特征，却不能确保 latent 中保留了可用的语义推理结构。
+- **没有该模块的问题**：表 3 中移除 $\mathcal{L}_{\mathrm{verb}}$ 后，三个推理基准的平均分从 $52.8$ 降到 $48.5$。
+
+需要注意，verbalizer 只是一种训练监督和可选解释器。动作推理默认不经过 verbalizer，因此它生成的文字不等同于动作模型真实因果过程的完整证明。
+
+#### 4.2.4 Action-Aligned Visual Plan Distillation：补足空间规划
+
+- **输入**：教师高质量轨迹 $\tau^{+}$ 对应的 `&lt;answer&gt;` hidden state $h_t^T$，以及 student 的对应 hidden state $h_t$。
+- **处理**：使用 L2 距离进行表示对齐。
+- **输出**：与教师视觉计划接近的 student 表示。
+- **作用**：把教师从轨迹级动作奖励中学到的空间规划能力迁移给 student。
+- **为什么需要**：语言上合理的计划未必对应正确的空间路径，机器人动作需要更直接的轨迹 grounding。
+- **没有该模块的问题**：在已经移除 $\mathcal{L}_{\mathrm{verb}}$ 的基础上继续移除 $\mathcal{L}_{\mathrm{distill}}$，推理平均分进一步从 $48.5$ 降到 $47.7$；机器人操作平均分从 $66.9$ 降到 $64.9$。
+
+#### 4.2.5 Spatial Tokens：并行输出二维视觉轨迹
+
+- **输入**：latent reasoning 后的学生 VLM 表示。
+- **处理**：附加 $K=5$ 个可学习 spatial tokens，每个 token 通过 MLP 并行预测一个 waypoint。
+- **输出**：5 个二维 waypoint，以及 spatial tokens 在各层中的 KV cache。
+- **单臂/双臂统一表示**：每个 waypoint 使用
+
+  $$
+  p_i=[x_{\mathrm{single}},y_{\mathrm{single}},
+  x_{\mathrm{left}},y_{\mathrm{left}},
+  x_{\mathrm{right}},y_{\mathrm{right}}]\in\mathbb{R}^{6}.
+  $$
+
+  单臂数据只监督前两维，双臂数据监督后四维，未使用维度在损失中被 mask。
+- **作用**：把“语义上要做什么”变成“末端执行器在图像中应沿什么路径移动”。
+- **为什么需要**：它既提供可视化规划，也为动作模型提供结构化的空间条件。
+- **没有该模块的问题**：只有抽象 latent reasoning，缺少连接高层推理和低层控制的空间桥梁。
+
+#### 4.2.6 Reasoning-Enhanced Action Model：执行视觉计划
+
+- **输入**：spatial tokens 的早期层 KV cache、机器人状态、视觉观测和语言指令。
+- **处理**：diffusion Transformer 通过 cross-attention 同时读取视觉计划和状态信息。
+- **输出**：连续动作块 $a_t$。
+- **作用**：把二维视觉规划转化为机器人可执行的低层动作。
+- **为什么使用早期层 KV**：补充实验显示，LIBERO 平均成功率为：早期层 KV $89.7$，后期层 KV $88.3$，直接使用 spatial token 最终 hidden state 为 $87.1$。作者认为早期层表示保留了更多视觉规划信息。
+- **没有该模块的问题**：student 只能回答问题或预测图像轨迹，不能真正控制机器人。
+
+### 4.3 关键公式或算法
+
+#### 4.3.1 教师的 GRPO 目标
+
+教师模型通过下式优化显式推理轨迹：
+
+$$
+\mathcal{J}_{\mathrm{GRPO}}(\theta)=
+\mathbb{E}_{\tau\sim\mathcal{F}_{\theta}^{T}}
+\left[
+\min\left(
+r_{\theta}(\tau)A(\tau),
+\operatorname{clip}\left(r_{\theta}(\tau),1-\epsilon,1+\epsilon\right)A(\tau)
+\right)
+\right],
+$$
+
+其中
+
+$$
+r_{\theta}(\tau)=
+\frac{\mathcal{F}_{\theta}^{T}(\tau)}
+{\mathcal{F}_{\mathrm{old}}^{T}(\tau)}
+$$
+
+表示当前教师与旧策略对同一推理轨迹的概率比。组内 advantage 为
+
+$$
+A(\tau)=
+\frac{R_{\tau}-\operatorname{mean}\left(\{R_i\}_{i\in G(\tau)}\right)}
+{\operatorname{std}\left(\{R_i\}_{i\in G(\tau)}\right)}.
+$$
+
+- $R_{\tau}$：轨迹 $\tau$ 的奖励。
+- $G(\tau)$：与 $\tau$ 属于同一输入的 rollout 组。
+- $A(\tau)&gt;0$：该轨迹优于组内平均水平。
+- **目的**：让教师学到动作对齐的高质量显式推理，同时为 student 提供自然的质量排序。
+
+每组选择
+
+$$
+\tau^{+}=\arg\max_{\tau\in G}A(\tau),\qquad
+\tau^{-}=\arg\min_{\tau\in G}A(\tau).
+$$
+
+通俗理解：让教师对同一个问题提出 5 个方案，选奖励最高的作为正例，最低的作为反例。
+
+#### 4.3.2 Verbalizable preference loss
+
+student 先生成连续 latent $\mathbf{z}$，再由 verbalizer 对候选推理计算概率：
+
+$$
+\mathcal{L}_{\mathrm{verb}}
+=-\mathbb{E}
+\left[
+\log\sigma
+\left(
+\beta
+\left(
+\log\frac{p_{\psi}(\tau^{+}\mid\mathbf{z})}{p_{\mathrm{ref}}(\tau^{+})}
+-
+\log\frac{p_{\psi}(\tau^{-}\mid\mathbf{z})}{p_{\mathrm{ref}}(\tau^{-})}
+\right)
+\right)
+\right].
+$$
+
+- $p_{\psi}(\tau\mid\mathbf{z})$：verbalizer 在 latent 条件下生成轨迹 $\tau$ 的概率。
+- $p_{\mathrm{ref}}(\tau)$：不接收 latent 条件的参考模型概率。
+- $\sigma$：sigmoid 函数。
+- $\beta=0.1$：偏好强度。
+- **整体含义**：与参考模型相比，加入 latent 后应该更明显地偏好 $\tau^{+}$，而不是 $\tau^{-}$。
+- **作用**：梯度通过 verbalizer 回传到 student，使 student 学会生成能够支持高质量推理的 latent。
+
+训练前 3000 次迭代使用 $\tau^{+}$ 作为标准语言建模标签，先让 verbalizer 学会读取 latent；随后冻结 verbalizer，在最后 1500 次迭代使用 $\mathcal{L}_{\mathrm{verb}}$ 优化 student。
+
+#### 4.3.3 视觉计划蒸馏
+
+$$
+\mathcal{L}_{\mathrm{distill}}
+=\left\|h_t^{T}-h_t\right\|_2^2.
+$$
+
+- $h_t^{T}$：教师在高质量推理 $\tau^{+}$ 后，对应 `&lt;answer&gt;` token 的 hidden state。
+- $h_t$：student 的对应 hidden state。
+- **整体含义**：要求 student 对视觉计划的内部表示接近教师。
+- **通俗理解**：即使 student 不再说出教师的长篇解释，也要在准备输出轨迹时形成相似的空间计划。
+
+#### 4.3.4 并行 waypoint 预测
+
+$$
+\mathcal{L}_{\mathrm{student}}
+=\mathcal{L}_{\mathrm{verb}}
++\mathcal{L}_{\mathrm{distill}}
++\mathcal{L}_{\mathrm{ans}},
+$$
+
+其中
+
+$$
+\mathcal{L}_{\mathrm{ans}}
+=\sum_{i=1}^{K}
+\left\|p_i-\hat{p}_i\right\|_2^2,
+\qquad
+p_i=\operatorname{MLP}\left(h&#x27;(s_i)\right).
+$$
+
+- $s_i$：第 $i$ 个 spatial token。
+- $h&#x27;(s_i)$：该 token 的输出 hidden state。
+- $p_i$：预测 waypoint。
+- $\hat{p}_i$：真实 waypoint。
+- **作用**：保证 latent reasoning 最终落到可执行的视觉路径上。
+
+#### 4.3.5 动作模仿学习
+
+$$
+\mathcal{L}_{\mathrm{IL}}(\phi)
+=
+\ell\left(
+\pi_{\phi}(o_t,l,c_t),
+\hat{a}_t
+\right).
+$$
+
+- $c_t$：从 spatial tokens 的 KV cache 提取的视觉规划。
+- $\hat{a}_t$：真实机器人动作。
+- $\ell$：diffusion policy 的去噪目标。
+- **整体含义**：给定观测、指令和高层视觉计划，动作模型应恢复专家动作。
+
+### 4.4 关键设计之间的关系
+
+$$
+\text{高质量文本偏好}
+\xrightarrow{\mathcal{L}_{\mathrm{verb}}}
+\text{语义推理 latent}
+\xrightarrow{\mathcal{L}_{\mathrm{distill}}+\mathcal{L}_{\mathrm{ans}}}
+\text{视觉轨迹计划}
+\xrightarrow{\mathcal{L}_{\mathrm{IL}}}
+\text{连续机器人动作}.
+$$
+
+这条链条解释了为什么论文同时需要语言、视觉轨迹和动作监督：三类监督分别解决“想得对”“路线对”和“动作对”。
+
+## 5. 与现有方法对比
+
+| 方法 | 核心思想 | 优点 | 缺点 | Fast-ThinkAct 的改进点 |
+|---|---|---|---|---|
+| OpenVLA、RDT 等 Foundation VLA | 从大规模机器人示范直接学习语言条件动作 | 端到端、推理流程相对直接 | 对长时序、失败恢复和分布外场景的泛化有限 | 在动作模型前加入紧凑高层推理和视觉计划 |
+| CoT-VLA、Embodied CoT | 用监督生成的文本或视觉 CoT 作为中间推理 | 推理结构清楚，能够增强规划 | 依赖大量推理标注；文本生成慢 | 用教师奖励偏好蒸馏，不在测试时展开长文本 |
+| MolmoAct | 使用二维视觉轨迹等空间表示进行 reasoning | 更接近机器人空间控制 | 仍需要较长的结构化生成，论文报告延迟为 6723 ms | 用 5 个 spatial tokens 并行预测轨迹，整体延迟为 805 ms |
+| ThinkAct | 通过动作对齐奖励和 GRPO 学习显式文本 CoT | 长时序、少样本和失败恢复能力较强 | 约 250 个文本 token，推理延迟高 | 将教师的奖励知识压缩到 6 个 continuous latent tokens |
+| ECoT-Lite | 通过 reasoning dropout 跳过部分测试时推理 | 能够减少延迟 | 直接丢弃 reasoning 可能造成规划不一致或信息丢失 | 不是删除推理，而是把推理压缩进连续 latent |
+| 文本长度惩罚 | 用 RL 惩罚过长文本，鼓励短 CoT | 保持文本形式，易于阅读 | 训练可能不稳定；过短文本仍会丢失信息 | 连续 latent 的单 token 信息容量更高，并加入视觉计划对齐 |
+| Fast-ThinkAct | 偏好引导的 verbalizable latent CoT + action-aligned visual plan distillation + diffusion action model | 兼顾速度、规划、解释接口和动作 grounding | 训练流程复杂，依赖教师、轨迹标注和大规模数据 | 本文方法 |
+
+本质区别不只是“把 250 个 token 变成 6 个 token”，而是把离散文本推理改成连续推理，并另外保留一条经过二维轨迹监督的视觉规划通道。实验也表明，直接把教师限制为 6 个文本 token 的效果明显较差。
+
+## 6. 实验表现与优势
+
+### 6.1 实验设置
+
+- **VLM backbone**：Qwen2.5-VL-3B；补充实验扩展到 7B。
+- **Verbalizer**：Qwen3-0.6B，并插入 cross-attention。
+- **latent reasoning steps**：$M=6$。
+- **spatial waypoints**：$K=5$。
+- **GRPO rollout size**：$N=5$。
+- **SFT**：1 epoch，batch size 64，学习率 $1\times10^{-5}$。
+- **CoT-SFT**：15K iterations，batch size 64，学习率 $1\times10^{-5}$。
+- **Teacher-student training**：4500 iterations，batch size 128，学习率 $1\times10^{-6}$。
+- **Action policy training**：20K iterations，batch size 256，学习率 $1\times10^{-4}$。
+- **计算资源**：全部实验使用 16 张 NVIDIA A100 80GB GPU。
+- **动作模型**：SimplerEnv 使用基于 OXE 预训练的 DiT-Policy；LIBERO 和 RoboTwin2.0 使用 RDT。论文借此说明方法不绑定单一动作模型。
+
+### 6.2 数据集
+
+#### 推理 VLM 训练数据
+
+- 单臂二维轨迹：MolmoAct 标注的 OXE，约 130 万条。
+- 双臂二维轨迹：AIST 视频，经 Molmo-72B 检测夹爪起点、CoTracker3 跟踪，约 9.2 万条。
+- RoboFAC：训练集约 6.4 万 QA，用于失败识别和恢复规划。
+- RoboVQA：约 79.8 万 QA。
+- ShareRobot：超过 100 万 QA。
+- EgoPlan-Bench 训练数据：约 5.3 万 video-text 对。
+- Video-R1-CoT：16.5 万带 CoT 的视频问答。
+- PixMo：约 72.6 万样本，用于保持通用视觉理解。
+
+数据处理分三步：
+
+1. 约 400 万样本用于 SFT。
+2. 从 SFT 数据中抽取约 20 万样本，并加入 16.5 万 Video-R1-CoT 进行 CoT-SFT。
+3. 从不同数据集和数据类型中平衡抽样约 5 万样本，用于教师 GRPO 和 student latent distillation。
+
+#### 动作策略训练数据
+
+- OXE：用于 DiT-Policy 和通用单臂动作学习。
+- Static ALOHA：补充双臂机器人动作数据。
+- 目标环境示范：LIBERO、RoboTwin2.0 等环境分别进行适配。
+
+### 6.3 Baseline
+
+- Foundation VLA：OpenVLA、$\pi_0$、RDT、Magma、RoboBrain2.0 等。
+- Reasoning VLA：CoT-VLA、ThinkAct、MolmoAct。
+- 通用 VLM：GPT-4V、Gemini-2.5-Flash、InternVL、NVILA、Qwen2.5-VL。
+- 动作策略：Diffusion Policy、ACT。
+- 高效文本推理对照：无 thinking、限制为 6 个文本 token、RL length penalty。
+
+### 6.4 评价指标
+
+- **LIBERO、SimplerEnv、RoboTwin2.0**：任务成功率。
+- **EgoPlan-Bench2**：多项选择准确率。
+- **RoboVQA**：BLEU-1 至 BLEU-4 及平均 BLEU。
+- **OpenEQA、RoboFAC**：与人类偏好对齐的 LLM-based score。
+- **效率**：一次 reasoning VLA 推理的总延迟，图 3 将其拆为 pre-fill、reasoning 和 action prediction。
+
+### 6.5 主实验结果
+
+#### 机器人操作
+
+Fast-ThinkAct-3B 在 LIBERO 四个子集上的成功率为：
+
+| Benchmark | Fast-ThinkAct | 最强对照 |
+|---|---:|---:|
+| LIBERO-Spatial | 92.0 | ThinkAct 88.3 |
+| LIBERO-Object | 97.2 | MolmoAct 95.4 |
+| LIBERO-Goal | 90.2 | CoT-VLA / MolmoAct 87.6 |
+| LIBERO-Long | 79.4 | MolmoAct 77.2 |
+| LIBERO Average | 89.7 | MolmoAct-7B 86.8 |
+| SimplerEnv-Google | 68.7 | ThinkAct-7B 68.3 |
+
+在 RoboTwin2.0 双臂操作中：
+
+| 方法 | Easy Average | Hard Average |
+|---|---:|---:|
+| RDT | 56.4 | 22.8 |
+| ThinkAct | 62.4 | 24.7 |
+| Fast-ThinkAct | **65.7** | **26.4** |
+
+Fast-ThinkAct 相比 RDT 提高 $9.3$ 和 $3.6$ 个百分点，相比 ThinkAct 提高 $3.3$ 和 $1.7$ 个百分点。需要注意，Hard setting 的绝对成功率仍只有 $26.4\%$，说明复杂域随机化双臂任务远未解决。
+
+#### 具身推理
+
+Fast-ThinkAct-3B 在 EgoPlan-Bench2、RoboVQA、OpenEQA 上分别得到 $46.4$、$60.8$、$51.2$，总体平均 $52.8$，高于 ThinkAct-3B 的 $49.4$。
+
+7B 扩展实验中，Fast-ThinkAct-7B 的总体平均为 $55.9$，高于 ThinkAct-7B 的 $54.7$。但它并非在每个细分指标上都占优，例如 EgoPlan-Bench2 平均为 $47.5$，略低于 ThinkAct-7B 的 $48.2$；优势主要来自 RoboVQA 和 OpenEQA。
+
+#### 推理效率
+
+| 方法 | 参数规模 | 延迟 |
+|---|---:|---:|
+| ThinkAct | 7B | 7513 ms |
+| MolmoAct | 7B | 6723 ms |
+| ThinkAct | 3B | 5674 ms |
+| Fast-ThinkAct | 3B | **805 ms** |
+
+- 相比 ThinkAct-7B，延迟降低 $89.3\%$，约 $9.3\times$ 加速。
+- 相比 MolmoAct-7B，延迟降低 $88.0\%$。
+- 与同规模 ThinkAct-3B 相比，约 $7\times$ 加速。
+
+同规模对照很重要，因为它说明加速不只是由 3B 与 7B 参数差异造成的。
+
+#### 直接缩短文本并不能替代 latent reasoning
+
+| 方法 | 三个推理任务平均分 |
+|---|---:|
+| Textual Teacher | 49.8 |
+| 推理时完全不生成 thinking | 46.5 |
+| 推理时只生成 6 个文本 token | 46.3 |
+| RL Length-Penalty，约 50 个 token | 47.8 |
+| Fast-ThinkAct，6 个 latent token | **53.3** |
+
+这组实验支持作者的核心论点：**连续 latent 的有效容量不能简单等同于同数量的文本 token。**
+
+需要注意，补充材料表 6 在这一对照中报告 Fast-ThinkAct 的 OpenEQA 为 $52.8$、总体为 $53.3$，与正文表 2 的 OpenEQA $51.2$、总体 $52.8$ 略有差异；论文没有明确解释是否来自不同 checkpoint 或评估设置。
+
+### 6.6 消融实验
+
+#### 推理任务损失消融
+
+| 方法 | EgoPlan | RoboVQA | OpenEQA | Average |
+|---|---:|---:|---:|---:|
+| Fast-ThinkAct | 46.4 | 60.8 | 51.2 | **52.8** |
+| w/o $\mathcal{L}_{\mathrm{verb}}$ | 42.1 | 53.8 | 49.5 | 48.5 |
+| w/o $\mathcal{L}_{\mathrm{verb}},\mathcal{L}_{\mathrm{distill}}$ | 41.6 | 52.7 | 48.9 | 47.7 |
+| Textual Teacher | 41.7 | 58.2 | 49.4 | 49.8 |
+| SFT + CoT-SFT | 40.0 | 46.1 | 48.8 | 45.0 |
+| SFT only | 40.5 | 53.6 | 45.3 | 46.5 |
+
+结论：
+
+- $\mathcal{L}_{\mathrm{verb}}$ 是最主要的增益来源，说明偏好引导能够过滤教师的冗余或错误推理。
+- $\mathcal{L}_{\mathrm{distill}}$ 提供额外增益，说明语言语义监督不能代替动作对齐的视觉规划监督。
+- 直接 CoT-SFT 并不稳定地优于普通 SFT，尤其在结构化推理任务上可能被冗长输出拖累。
+
+#### 操作任务损失消融
+
+三个操作基准的平均分从完整模型的 $68.2$，在移除 $\mathcal{L}_{\mathrm{verb}}$ 后降到 $66.9$，再移除 $\mathcal{L}_{\mathrm{distill}}$ 后降到 $64.9$。这说明两种损失不仅改善 QA，也会影响真实动作成功率。
+
+#### latent reasoning step 数量
+
+在 LIBERO Average 上：
+
+- $M=1$：$86.9$
+- $M=6$：$89.7$
+- $M=30$：$89.2$
+- $M=100$：$86.8$
+
+太少的 token 容量不足，太多 token 又会引入冗余或噪声，$M=6$ 在当前配置下最优。这里的结论是经验性的，并不说明所有任务的最佳 latent 长度都固定为 6。
+
+### 6.7 可视化或定性结果
+
+1. **长时序规划**：在 SimplerEnv、LIBERO-Long 和 RoboTwin2.0 中，预测的二维轨迹能够覆盖开炉、放置 moka pot、双臂交接等多阶段操作。
+2. **失败恢复**：在 RoboFAC-Sim 和 RoboFAC-Real 上，Fast-ThinkAct 得到 $91.1$ 和 $78.9$，相对第二名 RoboFAC-3B 分别提高 $10.9$ 和 $16.4$ 分。模型能够识别掉落、位置偏差等错误，并给出重新对齐和抓取方案。
+3. **少样本适应**：RoboTwin2.0 每个任务只使用 10 条示范微调时，Fast-ThinkAct 在中、长时序任务上优于 RDT、$\pi_0$ 和 ThinkAct。
+4. **可语言化 latent**：verbalizer 解码的 student reasoning 比教师文本更短、更聚焦。补充材料还给出教师长推理得出错误结论，而 student 的简洁推理得出正确结论的案例。
+
+这些可视化说明 latent 不是简单丢弃推理，而是在训练目标引导下过滤了部分冗余内容。不过，个别案例只能作为机制直观展示，不能单独证明 latent 在所有输入上都忠实可解释。
+
+### 6.8 局限性
+
+#### 论文明确提出的局限
+
+Verbalizer 基于预训练 LLM，因此会继承语言模型幻觉，有时生成看似合理但不准确的解释。作者认为这不直接影响动作执行，因为默认推理时动作模型使用经过视觉轨迹蒸馏的 latent，而不是 verbalizer 文本。未来可以加入 grounding-aware 目标或幻觉抑制方法。
+
+#### 阅读后需要额外注意的局限
+
+1. **解释文字与动作决策不是完全等价的**：verbalizer 是对 latent 的后验解码器，不参与默认动作生成，因此“能解码出合理文字”不能严格证明该文字就是动作产生的完整因果原因。
+2. **训练成本很高**：方法包含 SFT、CoT-SFT、教师 GRPO、student distillation 和 action post-training，使用约 400 万 SFT 样本和 16 张 A100 80GB，复现门槛高。
+3. **依赖外部轨迹标注管线**：双臂轨迹需要 Molmo-72B 检测和 CoTracker3 跟踪，标注误差可能传入 visual plan distillation。
+4. **操作评估仍以模拟器为主**：补充材料明确称 SimplerEnv、LIBERO 和 RoboTwin2.0 都是 simulation benchmark。RoboFAC-Real 证明的是对真实机器人视频的失败分析，而不是完整闭环真实机器人操作成功率。
+5. **二维轨迹表达有限**：二维 waypoint 易于学习和可视化，但不能显式表示深度、力、接触状态和遮挡后的三维几何。
+6. **Hard setting 仍然困难**：RoboTwin2.0-Hard 平均成功率仅 $26.4\%$。
+7. **效率数字需要结合系统配置解读**：论文给出了统一图表中的延迟对比，但没有在正文中充分拆解不同部署、硬件和 action horizon 对延迟的影响。
+8. **尚未确认代码开源**：缺少官方代码会影响训练细节核验和结果复现。
+
+## 7. 学习与应用
+
+### 7.1 是否开源
+
+- 论文和项目主页公开。
+- 截至 2026 年 7 月 24 日，项目主页没有提供官方代码链接。
+- 因此结论应写为：**论文公开，但代码尚未确认开源**，而不是直接写“已开源”或“未开源”。
+
+### 7.2 复现关键步骤
+
+1. 准备具身 QA、单臂和双臂二维视觉轨迹数据。
+2. 以 Qwen2.5-VL 为 backbone，进行 SFT 和 CoT-SFT。
+3. 用动作对齐视觉奖励与 QA 奖励对 textual teacher 做 GRPO。
+4. 每个输入生成 $N=5$ 条 rollout，通过 advantage 选择 $\tau^{+}$ 和 $\tau^{-}$。
+5. 初始化 latent student，固定 $M=6$，附加 $K=5$ 个 spatial tokens。
+6. 初始化 Qwen3-0.6B verbalizer；先用 $\tau^{+}$ 做 3000 次 LM warm-up。
+7. 冻结 verbalizer，再使用 $\mathcal{L}_{\mathrm{verb}}+\mathcal{L}_{\mathrm{distill}}+\mathcal{L}_{\mathrm{ans}}$ 训练 student 1500 次。
+8. 从 spatial tokens 的早期层 KV cache 提取 $c_t$。
+9. 将 $c_t$ 接入 DiT-Policy 或 RDT，冻结 student 和 state encoder，用动作数据训练 action model。
+10. 在 LIBERO 或 RoboTwin2.0 等目标环境上使用少量环境内示范微调，并分别评估成功率与延迟。
+
+### 7.3 需要注意的实现细节
+
+- latent token 是自回归连续向量，不是普通词表中的特殊 token。
+- preference 阶段需要保证梯度能够经过冻结的 verbalizer 回传到 student latent。
+- 教师用于 $\mathcal{L}_{\mathrm{distill}}$ 的 hidden state 必须来自高 advantage 轨迹 $\tau^{+}$。
+- spatial tokens 的 unused coordinate 需要根据单臂/双臂类型正确 mask。
+- waypoint 监督和图像预处理必须采用一致坐标归一化。
+- action model 使用的是 spatial token 的早期层 KV cache，而不是最后一层输出。
+- 不同 action model 的 KV 维度不同，论文使用线性投影适配 DiT-Policy 的 1024 维和 RDT 的 2048 维。
+- 推理测速应固定硬件、batch size、输入分辨率、action chunk 长度和生成配置。
+- 若只复现推理基准而不复现机器人动作，可先实现 teacher-student-verbalizer 部分；若复现完整 VLA，则还需要动作数据、diffusion policy 和环境适配。
+
+### 7.4 是否可以迁移到其他任务
+
+可以，尤其适合“显式 CoT 有帮助，但在线延迟很敏感”的任务：
+
+- **Ego-Exo 视角融合**：可以让教师产生跨视角显式推理，再把共享语义和空间对应关系压缩到 latent；同时设计跨视角轨迹或关键点对齐损失。
+- **自动驾驶**：把长文本驾驶解释蒸馏成 latent plan，并使用车道中心线、目标轨迹或 BEV waypoint 进行 grounding。但安全场景需要更严格的可解释性和不确定性估计。
+- **无人机导航**：用 spatial tokens 表示未来航点，再由低层控制器执行。
+- **交互式视频理解**：对长视频问题先做 latent temporal planning，再输出答案或行为。
+- **多智能体协作**：把冗长沟通计划压缩为共享 latent，但需要额外处理不同 agent 的语义对齐。
+
+可迁移的不是“固定使用 6 个 token”这个超参数，而是三层监督思想：**语言偏好保证语义质量，结构化轨迹保证环境 grounding，动作损失保证可执行性。**
+
+## 8. 总结
+
+### 8.1 一句话概括
+
+**潜在推理加速具身决策**
+
+### 8.2 速记版 Pipeline
+
+1. 教师先生成多条详细计划，并用奖励选出好计划和差计划。
+2. 学生把好计划压缩进 6 个连续 latent token。
+3. 语言解码器监督 latent 保留正确推理，轨迹对齐监督它保留空间规划。
+4. 5 个 spatial tokens 并行预测机器人在图像中的移动路径。
+5. diffusion action model 根据路径和机器人状态输出连续动作。
+
+### 8.3 最值得记住的三点
+
+1. **Fast-ThinkAct 的关键不是少说几句话，而是改变了推理表示空间。**
+2. **语言可解码性和视觉轨迹对齐缺一不可：前者保证“想得有意义”，后者保证“想法能落到空间动作”。**
+3. **verbalizer 训练时重要、执行时可选；真正驱动动作的是 spatial KV 中的视觉规划表示。**
+</pre></html>

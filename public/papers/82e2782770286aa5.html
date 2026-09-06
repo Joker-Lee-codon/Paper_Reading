@@ -1,0 +1,297 @@
+<!doctype html><html lang="zh"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Cosmos Policy: Fine-Tuning Video Models for Visuomotor Control and Planning</title><style>body{max-width:960px;margin:40px auto;padding:24px;color:#423f3d;font:16px/1.8 system-ui}a{color:#b95d68}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}</style><a href="../dashboard.html">← 全部论文</a><h1>Cosmos Policy: Fine-Tuning Video Models for Visuomotor Control and Planning</h1><p>公开阅读副本 · 完整可编辑版本保存在本地文献库</p><pre># 论文快速阅读
+
+## 1. 论文基本信息
+
+* 标题：Cosmos Policy: Fine-Tuning Video Models for Visuomotor Control and Planning
+* 作者：Moo Jin Kim; Yihuai Gao; Tsung-Yi Lin; Yen-Chen Lin; Yunhao Ge; Grace Lam; Percy Liang; Shuran Song; Ming-Yu Liu; Chelsea Finn; Jinwei Gu
+* 年份：2026
+* 会议或期刊：ICLR 2026 Poster
+* 研究方向：世界动作模型（World Action Model, WAM）、视频基础模型后训练、机器人模仿学习、世界模型、价值函数与模型式规划
+* 任务定义：给定语言任务描述、当前机器人本体状态和一个或多个相机视角，学习一个能够直接生成机器人动作块的策略；同一模型还要预测执行该动作后的未来观测及其价值，并在获得 rollout 数据后利用这些预测进行测试时动作搜索。
+* 输入与输出：输入为任务文本、当前 proprioception 和当前多视角图像。直接策略模式输出动作块，同时可以并行输出未来 proprioception、多视角未来图像与未来状态价值；规划模式按动作 $a$、未来状态 $s&#x27;$、价值 $V(s&#x27;)$ 的顺序自回归生成，并从多个动作候选中选出预测价值最高者。
+* 代码或项目主页：https://research.nvidia.com/labs/dir/cosmos-policy/（论文声明发布代码、模型、训练数据以及训练和评测脚本）
+* LaTeX 源码状态、来源、版本关系与本地路径：`verified`；官方 arXiv `2601.16163v1` source；`matches_pdf`；主文件 `[本机路径已省略]`，本地 PDF `[本机路径已省略]`。LaTeX 含 `\iclrfinalcopy`，标题、作者、完整摘要、核心实验数值与 ICLR 2026 Poster 页面一致；最终页面布局与图表以本地 22 页 PDF 为准。
+
+## 2. 摘要
+
+### 2.1 摘要原文
+
+Recent video generation models demonstrate remarkable ability to capture complex physical interactions and scene evolution over time. To leverage their spatiotemporal priors, robotics works have adapted video models for policy learning but introduce complexity by requiring multiple stages of post-training and new architectural components for action generation. In this work, we introduce Cosmos Policy, a simple approach for adapting a large pretrained video model (Cosmos-Predict2) into an effective robot policy through a single stage of post-training on the robot demonstration data collected on the target platform, with no architectural modifications. Cosmos Policy learns to directly generate robot actions encoded as latent frames within the video model&#x27;s latent diffusion process, harnessing the model&#x27;s pretrained priors and core learning algorithm to capture complex action distributions. Additionally, Cosmos Policy generates future state images and values (expected cumulative rewards), which are similarly encoded as latent frames, enabling test-time planning of action trajectories with higher likelihood of success. In our evaluations, Cosmos Policy achieves state-of-the-art performance on the LIBERO and RoboCasa simulation benchmarks (98.5% and 67.1% average success rates, respectively) and the highest average score in challenging real-world bimanual manipulation tasks, outperforming strong diffusion policies trained from scratch, video model-based policies, and state-of-the-art vision-language-action models fine-tuned on the same robot demonstrations. Furthermore, given policy rollout data, Cosmos Policy can learn from experience to refine its world model and value function and leverage model-based planning to achieve even higher success rates in challenging tasks. We release code, models, and training data at https://research.nvidia.com/labs/dir/cosmos-policy/.
+
+### 2.2 摘要翻译
+
+近期的视频生成模型展现出了捕捉复杂物理交互以及场景随时间演化过程的卓越能力。为了利用这些模型的时空先验，机器人领域已有工作将视频模型适配到策略学习中，但这些方法通常需要多个后训练阶段，并且要为动作生成加入新的架构组件，从而增加了系统复杂度。在本文中，我们提出 Cosmos Policy：一种简单的方法，它仅通过在目标机器人平台采集的示范数据上执行单阶段后训练，就能把大型预训练视频模型 Cosmos-Predict2 适配成有效的机器人策略，并且无需对模型架构做任何修改。Cosmos Policy 学习把机器人动作编码成潜在帧，并在视频模型的潜在扩散过程中直接生成这些动作，从而利用视频模型已有的预训练先验及其核心学习算法来刻画复杂的动作分布。此外，Cosmos Policy 还会生成未来状态图像和值，即预期累积奖励；这些信息同样被编码为潜在帧，使模型能够在测试时规划成功可能性更高的动作轨迹。在实验评估中，Cosmos Policy 在 LIBERO 和 RoboCasa 仿真基准上分别取得 98.5% 和 67.1% 的平均成功率，达到当前最佳性能；在具有挑战性的真实世界双臂操作任务中，它也取得了最高平均得分，超过从头训练的强扩散策略、基于视频模型的策略，以及在相同机器人示范数据上微调的当前最佳视觉—语言—动作模型。进一步地，在获得策略 rollout 数据后，Cosmos Policy 能够从经验中学习，改进自身的世界模型和价值函数，并利用模型式规划在困难任务上取得更高的成功率。作者在 https://research.nvidia.com/labs/dir/cosmos-policy/ 发布了代码、模型和训练数据。
+
+## 3. 方法动机
+
+### 3.1 作者为什么提出这个方法？
+
+大型视频生成模型通过预测视频中的未来帧，从互联网规模的视频数据中吸收了**时间因果关系、物体运动规律、接触变化和隐式物理**。机器人控制恰好需要理解“当前动作会如何改变未来观测”，因此作者希望把视频基础模型的时空先验直接转化为低层控制能力。Cosmos Policy 的研究问题可以拆成两层：第一，视频模型的原生 latent diffusion 机制能否在不添加动作头的情况下学习机器人动作分布；第二，同一生成序列能否同时容纳动作、未来状态和值，使直接控制、世界模型学习和测试时规划共用一套参数与训练目标。
+
+论文还关注一个实践问题：模仿学习示范往往集中在成功轨迹附近，世界模型和值函数很少见到策略自身会进入的失败状态。如果模型能够吸收真实 policy rollout 中的成功、失败和部分完成经验，它就有机会修正对失败后果的预测，并在部署时避开高风险动作。
+
+### 3.2 现有方法的痛点或不足是什么？
+
+1. **传统 VLA 的预训练信号以静态图文语义为主。** RT-2、OpenVLA、$\pi_{0.5}$ 等模型具有较强的语言理解与语义泛化能力，但静态图像—文本预训练并不直接要求模型学习连续运动、接触动力学或动作导致的未来变化。
+2. **许多视频机器人策略采用多阶段训练。** 常见流程先把视频模型微调为未来视频预测器，再训练 inverse dynamics、独立 action diffuser 或其他动作模块。训练链较长，预测误差也会在视频模块与动作模块之间传播。
+3. **已有 unified video-action 方法通常使用定制架构并从头训练。** 它们能够联合生成视频和动作，却难以完整复用大型预训练视频模型已经获得的时空先验。
+4. **策略、世界模型和值函数经常由分立网络承担。** 分立设计需要分别定义输入输出接口和训练目标，也较难让动作预测从未来状态和值监督中受益。
+5. **只用专家示范训练的规划模型存在分布覆盖不足。** 成功示范很少展示错误动作及其后果，导致世界模型在策略偏离示范分布时可能仍预测一个过于乐观的未来，价值函数也缺少可靠的失败边界。
+
+### 3.3 论文的核心假设或直觉是什么？
+
+核心直觉是：**视频扩散模型的 latent frame 可以充当统一的模态容器。** 图像本来就在潜空间中表示；低维 proprioception、动作块和值也可以归一化、复制并写入相同形状的潜在帧。只要固定这些帧在序列中的位置，再通过 conditioning mask 指定哪些帧是已知条件、哪些帧需要去噪生成，同一个 diffusion transformer 就能学习不同条件分布。
+
+序列按 $(s,a,s&#x27;,V(s&#x27;))$ 排列，因此“已知当前状态生成动作”“已知状态和动作生成未来状态”“已知状态、动作和未来状态生成价值”都可以解释为：在同一潜在序列上改变干净帧与加噪目标帧的边界。这个设计把 WAM 的统一性放在**表示形式与生成目标**上，而不是额外增加三个专用预测头。
+
+## 4. 方法设计
+
+### 4.1 整体 Pipeline
+
+**阶段 1：构造当前状态 $s$。** 输入包括任务文本、当前机器人 proprioception 和多个相机视角。相机图像先按照 Cosmos-Predict2 的原生方式经过 Wan2.1 时空 VAE 编码；文本通过 T5-XXL embedding 进入 diffusion transformer 的 cross-attention。多视角图像直接在图像序列层面插入，模型通过后训练学习不同视角的位置语义。
+
+**阶段 2：把非图像模态注入潜在序列。** 作者先在图像序列中放置全零 placeholder image，经过 VAE 得到 placeholder latent，再用归一化并重复铺展后的 proprioception、动作块或价值覆盖整个 $H&#x27;\times W&#x27;\times C&#x27;$ latent volume。三相机示例最终形成 11 个 latent frame，顺序对应 blank、当前 proprioception、三个当前视角、动作块、未来 proprioception、三个未来视角和未来价值，即整体语义顺序 $(s,a,s&#x27;,V(s&#x27;))$。
+
+**阶段 3：用条件掩码联合训练三个功能。** 基础训练批次按 50%/25%/25% 分配：50% 的样本从成功示范集抽取，用 $p(a,s&#x27;,V(s&#x27;)\mid s)$ 训练策略；25% 从包含失败示范的 rollout 集抽取，用 $p(s&#x27;,V(s&#x27;)\mid s,a)$ 训练世界模型；其余 25% 用 $p(V(s&#x27;)\mid s,a,s&#x27;)$ 训练价值函数。潜在序列的位置始终不变，改变的是哪些帧保持干净并充当条件、哪些帧被加噪并作为去噪目标。
+
+**阶段 4：直接策略部署。** 不需要规划时，动作、未来状态和值可以并行去噪生成，以降低延迟。机器人只执行动作块；未来状态和值可以丢弃，也可以保留下来用于可视化策略意图。LIBERO 和 RoboCasa 使用 5 个去噪步，ALOHA 使用 10 个去噪步。
+
+**阶段 5：利用 rollout 经验修正规划模型。** 作者部署基础策略并记录轨迹及最终成功、失败或部分完成分数，将这些 rollout 加入后训练数据。修正阶段把 90% 的 batch 平分给世界模型与价值函数，10% 用于维持策略能力。部署时保留两个 checkpoint：原始 checkpoint 作为 policy model，rollout 微调后的 checkpoint 作为 planning model，避免修正模型的策略分布改变后又与其训练 rollout 不匹配。
+
+**阶段 6：best-of-$N$ 模型式规划。** policy model 生成 $N$ 个动作候选；planning model 对每个动作预测未来状态，再预测该未来状态的价值。实验中 $N=8$，每个动作生成 3 个未来状态样本，每个未来状态再生成 5 个价值样本，共得到每个动作 15 个价值预测。作者先判断多数预测属于成功组还是失败组，再对多数类别内的数值求均值，即 “majority mean”；最后执行聚合价值最高的完整动作块。
+
+### 4.2 关键模块
+
+#### 模块 1：Latent Frame Injection
+
+* 模块输入：一个或多个当前/未来相机图像、机器人 proprioception、长度为 $K$ 的动作块、标量价值，以及基础视频模型规定的潜在帧形状 $H&#x27;\times W&#x27;\times C&#x27;$。
+* 模块处理过程：图像由原生 VAE 编码。非图像模态先按维度归一化到 $[-1,+1]$；随后展平并重复若干次，直到元素数能够填满一个潜在帧，再 reshape 成 $H&#x27;\times W&#x27;\times C&#x27;$。该体数据覆盖 placeholder image 经 VAE 得到的潜在帧。推理时反向读取所有重复副本并求平均，再反归一化到动作、proprioception 或价值的原始尺度。
+* 模块输出：在形状和数据接口上与视频 latent frame 兼容的动作帧、proprioception 帧和值帧，以及与它们交错排列的多视角图像帧。
+* 模块作用：让 Cosmos-Predict2 原有 diffusion transformer 和去噪目标可以直接处理机器人新增模态，无需动作头、value head、inverse dynamics 或额外 tokenizer。
+* 为什么需要该模块：基础 Cosmos-Predict2 只支持单视角起始图像和文本，并输出未来视频；机器人策略还需要多视角、proprioception、连续动作和值。Latent injection 提供了这些模态进入同一生成序列的统一接口。
+* 如果没有该模块会怎样：动作和价值需要由新模块预测，论文“零架构修改、单阶段后训练”的核心主张将不成立；不同输出也难以直接共享视频模型的扩散空间和去噪算法。
+
+#### 模块 2：固定序列布局与 Conditional Masking
+
+* 模块输入：语义顺序固定的 $(s,a,s&#x27;,V(s&#x27;))$ 潜在序列，以及当前训练样本希望学习的功能类型。
+* 模块处理过程：保持所有模态的帧位置不变，仅改变 conditioning mask。策略训练时保持 $s$ 干净，并对 $a,s&#x27;,V(s&#x27;)$ 加噪；世界模型训练时保持 $s,a$ 干净，并对 $s&#x27;,V(s&#x27;)$ 加噪；价值函数训练时保持 $s,a,s&#x27;$ 干净，仅对 $V(s&#x27;)$ 加噪。模型始终执行“根据干净前缀恢复加噪目标帧”的同一任务。
+* 模块输出：分别近似 $p(a,s&#x27;,V(s&#x27;)\mid s)$、$p(s&#x27;,V(s&#x27;)\mid s,a)$ 和 $p(V(s&#x27;)\mid s,a,s&#x27;)$ 的统一生成模型。
+* 模块作用：通过输入条件而不是网络结构切换 policy、world model 和 value function 三种角色；同时给策略和世界模型加入未来状态与价值辅助目标。
+* 为什么需要该模块：如果只有统一表示而没有不同的条件掩码，模型只能学习一个固定的联合生成任务，无法按部署需求进行动作预测、动力学预测和价值估计。
+* 如果没有该模块会怎样：三种条件分布需要独立模型或独立训练阶段；动作预测也会失去未来状态和值带来的辅助监督。RoboCasa 消融中退化到只学习 $\pi(a\mid s)$ 时，平均成功率从 67.1% 降至 44.4%。
+
+#### 模块 3：Parallel / Autoregressive Decoding
+
+* 模块输入：训练完成的统一模型、当前状态 $s$，以及是否进行规划的部署模式。
+* 模块处理过程：直接策略模式将 $a,s&#x27;,V(s&#x27;)$ 同时视为待去噪目标并行生成；规划模式先生成动作，再把动作作为条件生成未来状态，最后把未来状态作为条件生成价值。规划还可以让 policy model 与 planning model 使用不同 checkpoint。
+* 模块输出：低延迟的动作块，或者因条件逐步增加而更适合候选评估的动作—未来状态—价值链。
+* 模块作用：在同一训练模型上提供速度与预测质量之间的部署选择。并行模式服务直接控制，自回归模式服务模型式规划。
+* 为什么需要该模块：直接执行时只需要动作，逐阶段生成未来和值会产生额外延迟；规划时价值必须对应某个具体动作及其预测后果，自回归条件链更符合这一依赖关系。
+* 如果没有该模块会怎样：统一采用自回归会拖慢普通策略；统一采用并行生成会削弱动作、未来状态和值之间的明确条件依赖，也无法自然地组合原始 policy checkpoint 与 rollout-refined planning checkpoint。
+
+#### 模块 4：Rollout Refinement 与 Dual Deployment
+
+* 模块输入：基础 Cosmos Policy、部署得到的完整 rollout、每条轨迹的成功/失败或部分完成得分，以及 Monte Carlo return 标签。
+* 模块处理过程：在规划实验中，作者汇总先前评测产生的 505 条多策略 rollout，并为 ziploc 任务额外采集 143 条 Cosmos Policy rollout，共 648 条。使用这些数据继续微调基础 checkpoint，batch 中 45% 用于世界模型、45% 用于价值函数、10% 用于策略。部署时原始模型负责提出动作，修正模型专门负责预测候选动作的未来和价值。
+* 模块输出：保持原策略动作分布的 policy model，以及更熟悉真实策略成功与失败分布的 planning model。
+* 模块作用：补足专家示范对失败状态覆盖不足的问题，使世界模型能预测滑块脱手等实际错误，使价值函数能区分看似合理但最终失败的候选轨迹。
+* 为什么需要该模块：示范数据主要覆盖成功行为；仅在示范上训练的世界模型可能把失败动作的未来错误地预测为成功。Figure 6 显示基础模型未预测到 ziploc slider 脱手，rollout 微调后的模型预测更接近实际未来状态。
+* 如果没有该模块会怎样：规划器会依赖分布外且可能过度乐观的未来预测和值排序；best-of-$N$ 增加的计算量未必转换成更高成功率。
+
+#### 模块 5：Best-of-N、预测集成与 Majority Mean
+
+* 模块输入：policy model 生成的 $N$ 个动作候选，planning model，以及每个候选对应的未来状态和值样本。
+* 模块处理过程：对每个动作候选生成 3 个未来状态，每个未来状态再生成 5 个价值，共 15 个价值样本。根据固定阈值将价值分成预测成功与预测失败两组，选择样本数量占多数的组，并只在该组内计算均值。比较 $N$ 个动作的聚合价值后执行最大者。ALOHA 规划实验使用 $N=8$，8 张 H100 并行处理 8 个分支。
+* 模块输出：预测后果更有可能成功的完整动作块。
+* 模块作用：把统一模型的随机生成能力转化为测试时搜索，并降低双峰价值分布或离群值对候选排序的影响。
+* 为什么需要该模块：扩散策略能够表达多模态动作分布，但单次采样可能选到较差模式；未来状态和值让模型可以在真正执行之前比较多个可能动作。
+* 如果没有该模块会怎样：部署退化为单次直接策略，无法利用 rollout-refined world/value model。规划实验中基础策略在两个困难任务上的平均分为 59.5，模型式规划达到 72.0。
+
+### 4.3 关键公式或算法
+
+#### 公式 1：Cosmos-Predict2 的 EDM 去噪目标
+
+* 完整公式：$$\mathcal{L}(D_\theta,\sigma)=\mathbb{E}_{\mathbf{x}_0,\mathbf{c},\mathbf{n}}\left[\left\|D_\theta(\mathbf{x}_0+\mathbf{n};\sigma,\mathbf{c})-\mathbf{x}_0\right\|_2^2\right],\qquad \mathbf{n}\sim\mathcal{N}(\mathbf{0},\sigma^2\mathbf{I}).$$
+* 变量含义：$\mathbf{x}_0$ 是由 VAE 编码的干净潜在帧序列；$\mathbf{c}$ 是由 T5-XXL 编码的文本条件；$\mathbf{n}$ 是方差由噪声等级 $\sigma$ 控制的独立高斯噪声；$D_\theta$ 是 diffusion transformer 去噪器；$\theta$ 为其可训练参数。
+* 公式中每个部分的含义：$\mathbf{x}_0+\mathbf{n}$ 构造被噪声破坏的输入；$D_\theta(\cdot;\sigma,\mathbf{c})$ 根据噪声等级与文本条件恢复干净样本；差值与 $L_2$ 范数衡量恢复结果和真实潜在序列之间的误差；期望覆盖训练样本、文本条件和噪声采样。
+* 公式整体的含义：模型学习在任意给定噪声等级下，把带噪 latent sequence 恢复为干净序列。Cosmos Policy 没有更换这一核心目标，只是把动作、proprioception 和价值也写入 $\mathbf{x}_0$ 的特定 latent frame。
+* 公式目的：最大限度保留视频基础模型的预训练学习机制，让新增模态能通过相同的去噪训练获得生成能力。
+* 在方法流程中的作用：它贯穿 policy、world model 和 value function 的所有训练样本；conditioning mask 决定哪些帧参与加噪和损失，公式本身保持统一。
+* 通俗理解：把图像、动作、未来状态和值都做成同一种“拼图块”，随机弄乱其中需要预测的块，再训练模型依据剩余干净块把它们复原。
+
+#### 公式 2：稀疏奖励下的状态价值与 Monte Carlo 标签
+
+* 完整公式：$$V^{\pi}(s)=\mathbb{E}_{\tau\sim\pi}\left[\sum_{k=t}^{H}\gamma^{k-t}R(s_k,a_k)\mid s_t=s\right]=\mathbb{E}_{\tau\sim\pi}\left[\gamma^{H-t}R(s_H,a_H)\mid s_t=s\right],$$ $$G_t=\gamma^{H-t}R(s_H,a_H).$$
+* 变量含义：$\pi$ 是当前策略；$s_t,a_t$ 是第 $t$ 步状态与动作；$H$ 是轨迹终止时间；$R(s_H,a_H)\in[0,1]$ 是终止奖励或部分完成得分；$\gamma$ 是折扣因子；$\tau$ 表示由策略产生的轨迹；$G_t$ 是该条实际 rollout 在时间 $t$ 的经验回报。
+* 公式中每个部分的含义：求和形式是一般的折扣累计回报；由于论文采用中间奖励为 0 的稀疏奖励，求和化为折扣后的终止奖励；Monte Carlo 标签直接使用已经观测到的轨迹结局，不需要 bootstrapping 另一个价值估计。
+* 公式整体的含义：一个未来状态的价值由从该状态继续执行策略后最终成功或完成程度的期望决定；训练数据中的每个 transition 使用该条轨迹的真实最终结果生成监督。
+* 公式目的：把成功、失败和部分完成 rollout 转化为可以注入潜在帧的标量价值监督，使候选动作能够按照预计任务完成度排序。
+* 在方法流程中的作用：基础联合训练和值函数训练使用该标签；rollout refinement 扩大标签覆盖的状态—动作范围；best-of-$N$ 在推理时读取预测价值。
+* 通俗理解：回看一条已经执行完的轨迹，把结局分数沿时间向前传；越接近成功结局且折扣越小的状态，训练标签越高。
+
+#### 公式 3：统一模型的三种条件分布
+
+* 完整公式：$$\underbrace{p(a,s&#x27;,V(s&#x27;)\mid s)}_{\text{policy training}},\qquad \underbrace{p(s&#x27;,V(s&#x27;)\mid s,a)}_{\text{world-model training}},\qquad \underbrace{p(V(s&#x27;)\mid s,a,s&#x27;)}_{\text{value-function training}}.$$
+* 变量含义：$s$ 是当前观测状态，由当前 proprioception 与多视角图像近似；$a$ 是长度为 $K$ 的动作块；$s&#x27;$ 是执行动作块后时间 $t+K$ 的未来观测；$V(s&#x27;)$ 是未来状态的期望折扣回报。
+* 公式中每个部分的含义：第一项以当前状态为条件，联合生成动作、动作后果和值；第二项额外给定动作，预测该动作导致的未来和值；第三项进一步给定实际或预测未来状态，只生成对应价值。三项共享同一 $(s,a,s&#x27;,V)$ 帧序列和参数。
+* 公式整体的含义：policy、world model 与 value function 是同一联合分布在不同已知条件下的生成问题；功能差异由 masking 产生。
+* 公式目的：在零架构修改条件下统一三类输出，并让策略从未来状态和值的辅助监督中学习更具物理一致性的动作表示。
+* 在方法流程中的作用：它定义 50/25/25 batch 划分、conditioning mask、并行/自回归解码以及后续 $V(s&#x27;)$ 与 $Q(s,a)$ 规划变体。
+* 通俗理解：同一排卡片中，遮住不同卡片让模型补空：只给当前状态时补动作和未来；再给动作时只补未来；未来也给出时只补结果分数。
+
+#### 公式 4：Latent Injection 的复制与反向读取
+
+* 完整公式：$$N_{\mathrm{copy}}=\frac{H&#x27;W&#x27;C&#x27;}{K d_{\mathrm{act}}},\qquad \mathbf{z}_a=\operatorname{reshape}\!\left(\operatorname{repeat}\!\left(\operatorname{vec}(\operatorname{norm}(\mathbf{a})),N_{\mathrm{copy}}\right),H&#x27;,W&#x27;,C&#x27;\right),$$ $$\widehat{\mathbf{a}}=\operatorname{unnorm}\!\left(\frac{1}{N_{\mathrm{copy}}}\sum_{i=1}^{N_{\mathrm{copy}}}\operatorname{unvec}_{K\times d_{\mathrm{act}}}(\widehat{\mathbf{z}}_a^{(i)})\right).$$
+* 变量含义：$K$ 是动作块长度；$d_{\mathrm{act}}$ 是单步动作维度；$H&#x27;,W&#x27;,C&#x27;$ 是单个 latent frame 的空间与通道尺寸；$N_{\mathrm{copy}}$ 是动作向量在 latent volume 中的重复次数；$\operatorname{norm}$ 和 $\operatorname{unnorm}$ 分别表示缩放到 $[-1,+1]$ 及恢复原尺度；$\mathbf{z}_a$ 是注入后的动作潜在帧。
+* 公式中每个部分的含义：先把 $K\times d_{\mathrm{act}}$ 的动作块归一化并展平；计算填满一个 latent frame 所需的副本数；重复并 reshape 后覆盖 placeholder latent。推理时把所有生成副本还原为动作块并求平均，以抵消单个空间位置的生成噪声。
+* 公式整体的含义：低维动作没有经过图像 VAE，也没有专用 action tokenizer；它通过确定性的复制映射进入视频 latent shape，再通过平均映射返回控制空间。Proprioception 使用同类过程，标量价值则在整个 latent volume 上求平均。
+* 公式目的：解决低维向量与高维视频潜在帧之间的形状不匹配，同时保持模型输入输出张量结构不变。
+* 在方法流程中的作用：它是 latent frame injection 的具体实现，决定动作和价值如何进入 EDM 去噪目标、如何从生成的 latent frame 解码并实际执行。
+* 通俗理解：把一小段动作数字复印很多份铺满一张“潜在图像”；模型生成后再把所有复印件平均，得到最终动作。
+
+#### 公式 5：Best-of-N 模型式规划规则
+
+* 完整公式：$$a_i\sim p_{\text{policy}}(a\mid s),\quad s&#x27;_{i,j}\sim p_{\text{plan}}(s&#x27;\mid s,a_i),\quad v_{i,j,k}\sim p_{\text{plan}}(V(s&#x27;)\mid s&#x27;_{i,j}),$$ $$\bar v_i=\operatorname{MajorityMean}\left(\{v_{i,j,k}\}_{j=1,k=1}^{3,5}\right),\qquad a^*=\arg\max_{a_i,\ i\in\{1,\ldots,N\}}\bar v_i.$$
+* 变量含义：$a_i$ 是第 $i$ 个候选动作块；$s&#x27;_{i,j}$ 是该动作的第 $j$ 个未来状态预测；$v_{i,j,k}$ 是针对该未来状态的第 $k$ 个价值预测；$N=8$；$\operatorname{MajorityMean}$ 表示先按固定阈值判断成功/失败多数类别，再在多数类别内求平均；$a^*$ 是最终执行动作。
+* 公式中每个部分的含义：第一步从原始策略保留的多模态动作分布采样；第二步利用 rollout-refined world model 想象每个动作后果；第三步用 refined value function 多次评估后果；集成聚合降低双峰和离群预测的影响；$\arg\max$ 完成候选选择。
+* 公式整体的含义：规划器没有通过梯度连续优化动作，而是对有限个扩散采样候选执行“提出—想象—评分—选择”。
+* 公式目的：在测试时利用额外计算寻找比单次策略采样更可能完成任务的动作，并让失败 rollout 学到的知识参与实际控制。
+* 在方法流程中的作用：连接 policy model、world model 和 value function 三种统一能力，是 Cosmos Policy 从直接策略扩展为 WAM 规划器的最终部署步骤。
+* 通俗理解：先让策略给出八种做法，再让世界模型在脑中预演每种做法，多次给预演结果打分，最后执行最有希望的一种。
+
+## 5. 与现有方法对比
+
+Cosmos Policy 与传统 VLA 的差异首先来自**预训练骨干学习的统计结构**。典型 VLA 利用视觉—语言模型获得物体、语言和任务语义，再由动作专家或动作头输出控制；Cosmos Policy 从未来视频预测模型出发，重点复用运动、时间一致性和隐式物理先验。其次，两者的输出接口不同：传统 VLA 的动作通常拥有专门的 tokenization 或 diffusion/action head；Cosmos Policy 把动作、未来状态和值都表示为视频 latent sequence 中的帧，并继续使用同一个 EDM 去噪目标。
+
+Cosmos Policy 也不同于“视频预测器 + inverse dynamics/action module”的分阶段策略。它在目标平台示范数据上进行一次联合后训练，同时获得直接动作预测、world model 与 value function。规划阶段仍然需要一个 rollout-refined checkpoint，但这是为了修正数据分布，而不是增加新架构。需要谨慎区分论文证据边界：实验表明这种统一方案在三个评测域取得很强结果，并不意味着视频骨干在所有语义泛化或跨具身任务上都优于 VLA；论文没有进行大规模开放词汇或跨机器人零样本评测。
+
+| 方法 | 核心思想 | 优点 | 缺点 | 改进点 |
+|---|---|---|---|---|
+| 传统 VLA（如 $\pi_{0.5}$、OpenVLA-OFT） | 用视觉—语言预训练骨干理解图像与语言，再通过动作 token、动作专家或动作头预测控制 | 语义知识和语言泛化强；已有大规模机器人动作预训练生态 | 静态图文预训练不直接优化未来运动；常缺少显式未来状态和值输出；动作接口通常独立于视觉生成接口 | Cosmos Policy 改用视频预训练骨干，并在统一 latent diffusion 序列中联合生成动作、未来状态和值 |
+| 分阶段视频策略 | 先生成未来视频，再用 inverse dynamics 或独立 action diffuser 从视频恢复动作 | 能利用视频时空先验；模块功能容易单独设计 | 多阶段训练与部署复杂；视频误差会传播到动作；新增架构未必继承基础模型全部能力 | Cosmos Policy 直接把动作写成 latent frame，以一次后训练和原生去噪目标学习动作分布 |
+| 从头训练的 unified video-action model | 定制一个联合生成未来帧和动作的统一架构 | 视频和动作具有联合监督，接口较一致 | 无法充分利用大型预训练视频模型；需要从机器人数据学习时空表示 | Cosmos Policy 从 Cosmos-Predict2-2B 初始化，在不改架构的情况下加入机器人模态 |
+| 分立 policy + world model + value function | 三个模型分别生成动作、预测动力学和估计价值，再通过 MPC/搜索连接 | 各模块可以针对任务优化，条件关系清楚 | 参数、训练目标和部署链条分散；可能出现模块间分布偏移 | Cosmos Policy 用同一参数和不同 conditioning mask 学习三种条件分布，再通过 dual deployment 控制 rollout 分布匹配 |
+| Cosmos Policy / WAM | 把 $s,a,s&#x27;,V(s&#x27;)$ 统一排成 latent frame sequence，通过去噪、条件掩码和 rollout refinement 完成控制与规划 | 零架构修改；动作/未来/价值共享视频先验；直接策略和规划共用模型；可从失败经验学习 | 2B 模型全参微调成本高；best-of-8 规划慢；只预测单个未来时刻且搜索深度为 1；跨具身与动态任务证据不足 | 后续可研究紧凑非图像表示、更少去噪步、时序历史、多步世界模型、树搜索和跨平台适配 |
+
+## 6. 实验表现与优势
+
+### 6.1 实验设置
+
+论文围绕四个问题组织实验：Q1 比较直接策略与强模仿学习基线；Q2 检验预训练、辅助目标和联合训练组成；Q3 检验 rollout 经验能否修正 world/value 并提升规划；Q4 比较使用 $V(s&#x27;)$ 的模型式规划和直接使用 $Q(s,a)$ 的 model-free 排序。
+
+三个评测域分别训练 Cosmos Policy checkpoint。LIBERO 训练 40K gradient steps，使用 64 张 H100、global batch size 1920，约 48 小时；动作块长度 16，执行完整动作块后重新查询。RoboCasa 训练 45K steps，使用 32 张 H100、batch size 800，约 48 小时；动作块长度 32，每次执行 16 步后重新查询。ALOHA 训练 50K steps，使用 8 张 H100、batch size 200，约 48 小时；动作块长度 50，对应 25 Hz 下 2 秒，并执行完整动作块。三者都全参微调 Cosmos-Predict2-2B，非图像模态均归一化到 $[-1,+1]$。
+
+直接策略在 LIBERO/RoboCasa 使用 5 个去噪步，ALOHA 使用 10 个去噪步，并行生成动作、未来状态和值。ALOHA 模型式规划对动作使用 10 个去噪步，对未来状态和值各使用 5 个去噪步；$N=8$ 个搜索分支由 8 张 H100 并行执行，每个动作使用 3 个未来状态和每状态 5 个价值预测。
+
+### 6.2 数据集
+
+**LIBERO：**包含 Spatial、Object、Goal、Long 四个 task suite；每套含 10 个任务、每任务 50 条示范，共 500 条。策略训练过滤重放失败的示范；world model 与 value function 使用未过滤数据，使约 10%–20% 的重放失败行为也提供后果和值监督。Cosmos Policy 每个 suite 评测 10 任务 × 50 episodes × 3 seeds，总计 6000 trials。
+
+**RoboCasa：**包含 24 个静态厨房操作任务，每任务有 50 条人工 teleoperation 示范和额外 1000 条 MimicGen 示范。Cosmos Policy 只使用每任务 50 条人工示范，以测试相对数据效率。每任务在 5 个场景中评测 50 trials，其中 2 个场景风格未在训练中出现，物体实例全部未见；跨 24 任务和 3 seeds 共 3600 trials。
+
+**真实 ALOHA：**双 ViperX 300 S 手臂，1 个俯视相机和 2 个腕部相机，输入含 14 维关节角、三视角图像和任务文本。四个任务共 185 条示范：put X on plate 80 条、fold shirt 15 条、put candies in bowl 45 条、put candy in ziploc bag 45 条。每种方法总计评测 101 trials，包含 ID 与 OOD 固定初始条件；四项任务分别测试语言跟随、长视野接触操作、多模态抓取顺序和毫米级高精度操作。
+
+**规划 rollout 集：**先前直接策略评测汇集 505 条来自所有策略的 rollout，再为 ziploc 任务额外采集 143 条 Cosmos Policy rollout，共 648 条，用于修正 world model 和 value function。这个数据量远小于基础视频模型预训练数据，论文把它作为有限 on-policy 经验下的规划验证。
+
+### 6.3 Baseline
+
+LIBERO 与 RoboCasa 的比较覆盖三类方法：从头训练的 diffusion-based policies（Diffusion Policy、Dita）；video model-based policies（UVA、UWM、Video Policy、FLARE 等）；fine-tuned VLA（$\pi_0$、$\pi_{0.5}$、OpenVLA-OFT、CogVLA、UniVLA、DP-VLA、GR00T-N1/N1.5 及其扩展）。
+
+真实 ALOHA 在相同 185 条目标平台示范上训练 Cosmos Policy、Diffusion Policy、OpenVLA-OFT+、$\pi_0$ 和 $\pi_{0.5}$。为控制 wall-clock training budget，Cosmos Policy、$\pi_0$、$\pi_{0.5}$ 与 OpenVLA-OFT+ 都训练 48 小时，但由于框架和迭代速度不同，gradient steps 和 GPU 数并不完全相同；因此这是等训练时长比较，不能解读成严格等 FLOPs 或等预训练数据比较。
+
+规划实验比较三种部署：基础 Cosmos Policy；用 $Q(s,a)$ 直接排序候选的 model-free planning；先预测 $s&#x27;$ 再评估 $V(s&#x27;)$ 的 model-based planning。三者聚焦 ALOHA 后两个困难任务及更难初始条件。
+
+### 6.4 评价指标
+
+LIBERO 与 RoboCasa 使用 episode success rate（SR，%），并在任务/套件和随机种子上求平均。ALOHA 使用 0–100 的**任务阶段完成分数**：完整成功为 100，部分完成按已完成阶段给分；论文同时报告每个任务、整体平均，以及 ID/OOD 拆分。规划实验继续使用两个困难 ALOHA 任务的完成分数。
+
+训练诊断报告 action、future proprioception、未来图像 latent 和 value 的 L1 loss，但这些是给定随机噪声等级的单步训练损失，不等同于多步 diffusion sampling 后的闭环控制误差。效率指标包括单个 action chunk 的 wall-clock inference latency、去噪步数、GPU 数和规划搜索时长。
+
+### 6.5 主实验结果
+
+**LIBERO（Table 1，PDF p.8）：**Cosmos Policy 在 Spatial/Object/Goal/Long 上分别为 98.1/100.0/98.2/97.6，平均 98.5。此前表中完整均值最高的 CogVLA 为 97.4，OpenVLA-OFT 为 97.1，$\pi_{0.5}$ 为 96.9；Cosmos 相对 CogVLA 提高 1.1 个百分点，并在 Long suite 相对 CogVLA 提高 2.2 个百分点。该结果支持视频预训练和统一生成接口在给定 benchmark 上具有竞争力。
+
+**RoboCasa（Table 2，PDF p.8）：**Cosmos Policy 只使用每任务 50 条人工示范，平均 SR 为 67.1。比较方法中 FLARE、GR00T-N1.5+HAMLET 为 66.4，Video Policy 为 66.0，GR00T-N1.5 为 64.1；这些方法大多使用每任务 300 条或更多示范。Cosmos 相对 66.4 提高 0.7 个百分点，同时示范数量明显更少。不同方法的预训练资源和训练实现并未完全统一，因此表格更适合支持“目标平台示范数据效率强”，不宜单独证明纯架构优势。
+
+**ALOHA（Figure 4 与 Table 3，PDF pp.8、19）：**Cosmos Policy 四任务总分分别为 100.0、99.5、89.6、85.4，平均 93.6；$\pi_{0.5}$ 平均 88.6，$\pi_0$ 77.9，OpenVLA-OFT+ 62.0，Diffusion Policy 33.6。Cosmos 在前三个比较方法都较弱的 ziploc 高精度任务上取得 85.4，而 $\pi_{0.5}$ 为 61.5。ID 平均为 96.3，OOD 平均为 89.3；$\pi_{0.5}$ 的 OOD 平均为 92.5，说明 Cosmos 的整体最高分并不等于每个泛化切片都领先。
+
+**模型式规划（Figure 7，PDF p.10）：**在 put candies in bowl / put candy in ziploc bag 两个困难任务上，基础 Cosmos Policy 得分为 49.0/70.0，平均 59.5；$Q(s,a)$ model-free planning 为 52.0/70.7，平均 61.3；$V(s&#x27;)$ model-based planning 为 60.0/84.0，平均 72.0。模型式规划相对基础策略平均提高 12.5 分，相对 model-free 提高 10.7 分。结果支持显式预测未来状态在有限 rollout 数据下有助于候选评估，但实验范围仅包含两个任务和单层 best-of-8 搜索。
+
+### 6.6 消融实验
+
+**LIBERO 联合辅助目标（Table 4，PDF p.20）：**完整模型平均 98.5；去掉 policy/world model 的辅助目标后为 97.0，绝对下降 1.5；从随机初始化训练为 94.6，下降 3.9。预训练视频先验的贡献大于该组实验中辅助目标的单独贡献，但两者都对最佳结果有帮助。
+
+**RoboCasa 逐项消融（Table 5，附录）：**完整 5-step 模型为 67.1；去掉 value-function training samples 为 66.6（-0.5）；再去掉 world-model training samples 为 64.0（相对完整 -3.1）；再去掉 policy 训练中的辅助 value target 为 62.5（-4.6）；最后连 policy 的 future-state 与 value 辅助目标都去掉、只训练 $\pi(a\mid s)$ 时为 44.4（-22.7）。最大跌幅出现在移除 future-state 辅助预测之后，说明“动作预测同时解释动作后果”是统一训练获得高性能的关键因素。
+
+**视频预训练的真实机器人证据：**从头训练版本在 fold shirt 上得分 80.8，比完整 Cosmos Policy 低 18.7 分，并出现可能损伤硬件的 jerky motion；作者因此停止了更多真实机器人测试。这说明预训练不仅影响成功率，还可能影响动作平滑性，但后者属于作者定性观察，没有独立平滑度指标。
+
+**去噪步数与速度：**RoboCasa 使用 1 个去噪步时平均 SR 66.4，比 5 步的 67.1 仅低 0.7 个百分点；每个 32-step action chunk 在单张 H100 上的延迟从 0.61 秒降至 0.16 秒，约快 3.8 倍。这表明直接策略有明显的速度压缩空间。
+
+### 6.7 可视化或定性结果
+
+**Figure 2（PDF p.4）**清楚显示当前观测 $s$ 保持干净，动作 $a$、未来状态 $s&#x27;$ 与价值 $V(s&#x27;)$ 作为加噪目标；动作、proprioception 和 value latent 用红框标出。图中多视角图像与非图像潜在帧按固定顺序排列，是理解 latent injection 与 conditional masking 的核心图。
+
+**Figure 5（PDF p.9）**展示 VLA 的典型失败：$\pi_{0.5}$ 在 ziploc bag 上抓取不精确并丢失夹持；OpenVLA-OFT+ 在两颗糖之间产生平均化的到达位置。作者将后一现象归因于 L1 action regression 难以刻画多模态动作分布；这是合理假设，但图像与任务结果不能单独证明因果机制。
+
+**Figure 6（PDF p.9）**比较 rollout refinement 前后的 world model。基础模型对 ziploc slider 脱手的失败后果预测不准确；rollout 微调后的预测与真实未来更接近，并最终支持成功轨迹。这是“失败经验修正世界模型”的直接定性证据。
+
+**Figure 7（PDF p.10）**显示 model-based $V(s&#x27;)$ 在两个困难任务上都高于基础策略和 $Q(s,a)$ model-free 变体，尤其 ziploc 从 70.0 提升到 84.0。**Figures 10–11（PDF pp.19–20）**展示 ID 与 OOD 初始状态确实改变了物体、衣物、糖果和容器的位置或外观，支撑评测包含实际分布变化。**Figure 12（PDF p.21）**把 50/25/25 batch masking 三种训练角色画在同一固定序列上，验证统一模型依赖条件掩码而非切换网络头。
+
+### 6.8 局限性
+
+1. **规划速度和硬件成本高。** $N=8$ 模型式规划使用 8 张并行 H100，生成 8 个动作、每动作 3 个未来、每未来 5 个价值，总耗时约 4.9 秒/动作块；动态环境在等待期间可能发生变化。
+2. **世界模型视野较短。** $s&#x27;$ 只表示动作块结束的 $t+K$ 时刻，模型不使用输入历史，也不生成多个连续未来时刻；搜索树只有一层，难以处理需要多次远期权衡的任务。
+3. **规划依赖额外 on-policy rollout。** 示范分布之外的准确 world/value 预测需要成功与失败 rollout；论文也明确指出减少所需 rollout 数量仍是未来方向。
+4. **跨具身和开放泛化尚未验证。** 实验覆盖 Franka 仿真与 ALOHA 真实平台，但每个域都单独全参微调；没有展示一个 checkpoint 跨机器人、跨相机配置或跨控制频率直接迁移。
+5. **总体领先不覆盖所有切片。** ALOHA OOD 平均分 $\pi_{0.5}$ 为 92.5，高于 Cosmos 的 89.3，提示 VLA 的大规模语义/动作预训练在某些分布外条件仍可能更强。
+6. **训练与比较成本并非严格同构。** ALOHA 控制了 48 小时 wall-clock，但各模型 GPU 数、batch size、gradient steps、参数规模和历史预训练数据不同；实验能够比较最终系统效果，不能精确分解优势来自骨干、训练算力还是表示设计的比例。
+7. **非图像模态的空间复制效率有限。** 动作和标量价值被重复填满高维 latent volume，接口简单但存在表示与计算冗余；论文没有与更紧凑 action/value tokenizer 做控制实验。
+
+## 7. 学习与应用
+
+### 7.1 是否开源
+
+是。摘要与 Reproducibility Statement 均声明在项目页发布代码、Cosmos Policy 模型 checkpoint、训练数据、训练脚本和评测脚本。项目主页为 https://research.nvidia.com/labs/dir/cosmos-policy/。本次核验只确认论文和已有项目元数据中的发布声明，没有重新审计仓库中每个资产的当前可下载状态。
+
+### 7.2 复现关键步骤
+
+1. 获取 Cosmos-Predict2-2B-Video2World、Wan2.1 时空 VAE 与文本编码组件，准备目标平台任务文本、多视角图像、proprioception、动作块和 episode outcome。
+2. 为每条样本构造当前观测 $s$、动作块 $a$、动作块结束时观测 $s&#x27;$ 和 Monte Carlo return $V(s&#x27;)$；非图像模态按维度缩放到 $[-1,+1]$。
+3. 按机器人相机配置创建 placeholder image 和固定 latent frame layout；执行 latent injection，把 proprioception、动作与价值复制并覆盖对应 placeholder latent。
+4. 使用与基础视频模型一致的 EDM 去噪目标全参微调。基础 batch 按 50% policy、25% world model、25% value function 设置条件 mask；为 policy/world model 保留 future/value 辅助目标。
+5. 根据数据域选择动作块长度、执行长度、去噪步数与噪声分布；先在直接策略模式验证闭环成功率、动作平滑性和延迟。
+6. 部署基础策略收集覆盖成功、失败与部分完成状态的 rollout，以 Monte Carlo return 标注；用 45% world model、45% value、10% policy 的比例继续微调 planning checkpoint。
+7. 部署双 checkpoint best-of-$N$：原策略提出动作，planning model 预测未来和值，使用 3×5 ensemble 与 majority mean 排序并执行最高价值动作。
+
+### 7.3 需要注意的实现细节
+
+Cosmos-Predict2 原始噪声等级来自 log-normal 分布。Cosmos Policy 训练改用混合分布：以 0.7 概率采样原 log-normal，以 0.3 概率从 $[1,85]$ 的 uniform 分布采样，以增加高噪声样本；0.7/0.3 未经过系统调参。推理把 $\sigma_{\min}$ 从 EDM 原始的 0.002 提高到 4，保持 $\sigma_{\max}=80$，作者发现这样能降低动作、未来状态和值生成的 L1 误差。
+
+VAE 对第一个图像帧单独编码，其余帧按 4 帧进行时间压缩。实现中需要额外 blank first latent，并把同一时刻的每个图像复制 4 份，确保当前和未来观测在压缩后具有相同结构；不能仅按概念图简单拼接一次图像。动作值从所有复制位置求平均，价值则对整个 latent volume 求平均；非图像模态不经过 VAE decode。
+
+训练损失的量级不能直接比较不同模态的闭环质量。LIBERO 训练结束时 action/future proprio/wrist image latent/third-person image latent/value L1 分别约为 0.012/0.007/0.068/0.036/0.007；RoboCasa 为 0.016/0.007/0.084/0.048/0.007；ALOHA 为 0.010/0.008/0.097/0.085/0.007。图像 latent loss 更高，作者据此判断低维动作、proprioception 与 value 学得更快，但最终仍需闭环成功率验证。
+
+实时性必须按 action chunk 而不是单步解释：5-step 生成在单张 H100 上约 0.61 秒，ALOHA 10-step 约 0.95 秒，但 ALOHA 每个 chunk 覆盖 2 秒控制；规划 4.9 秒则明显更难用于动态任务。执行完整动作块能减少重新查询次数，却也降低遇到扰动时的快速反馈能力。
+
+### 7.4 是否可以迁移到其他任务
+
+该方法很适合启发 EgoMe 的一三视角融合实验设计。可以把第一视角、第三视角、proprioception、动作和未来多视角状态放入一个固定序列，再用 mask 定义不同学习任务：例如给定 ego 预测 exo、给定 exo 预测 ego、给定双视角预测动作、给定动作预测双视角未来。这样，“融合”可以从 feature concatenation 扩展为**条件生成与缺失模态恢复**。
+
+迁移时需要验证四个问题。第一，一三视角通常不同步且视野互补，必须显式处理时间对齐与相机缺失，Cosmos Policy 的固定帧位置本身不能解决异步。第二，未来状态辅助监督是否真正改善动作或跨视角理解，需要设置只预测动作、加入单视角未来、加入双视角未来等逐级消融。第三，第三视角在真实部署中可能不存在，可以训练随机 mask 或 view dropout，并报告不同可用视角组合下的性能。第四，latent volume 复制动作的计算成本很高；如果 EgoMe 更关注表示学习或 benchmark，可比较 compact token、spatial latent injection 与 cross-attention adapter，以确定统一表示收益来自目标设计还是高维复制。
+
+对实验部分最可迁移的范式是 Cosmos Policy 的四问题结构：直接性能、组件消融、额外经验能否改进世界模型、显式未来模型是否优于只预测价值。EgoMe 可以对应设计为：一三视角联合模型是否优于单视角；跨视角/未来辅助目标各自贡献多大；加入真实失败或扰动数据能否改善预测；显式生成另一视角或未来状态是否优于仅用 fused feature 做动作回归。
+
+## 8. 总结
+
+### 8.1 一句话概括
+
+视频模型统一控制与规划
+
+### 8.2 速记版 Pipeline
+
+1. 把当前多视角图像与 proprioception 编码为状态 $s$。
+2. 用 latent frame injection 把动作 $a$、未来状态 $s&#x27;$ 和价值 $V(s&#x27;)$ 排进同一视频潜在序列。
+3. 改变 conditioning mask，以一个去噪模型联合训练策略、世界模型和值函数。
+4. 直接控制时并行生成并执行动作；规划时用 rollout 修正世界模型和值函数。
+5. 采样多个动作，逐个想象未来并评分，执行预测价值最高的动作块。
+</pre></html>
